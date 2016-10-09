@@ -3,11 +3,12 @@
 #' This is the function that is called internally to generate the memos in different
 #' forms.  This is not meant to be called by the user.
 #' @import xml2
+#' @export
 rocx <- function(reference_docx, draft = TRUE, keep_old = FALSE,
                  use_bookdown = TRUE, ...) {
 
   # Use bookdown if defined, otherwise use rmarkdown
-  if (('bookdown' %in% rownames(install.packages())) & use_bookdown) {
+  if (('bookdown' %in% rownames(installed.packages())) & use_bookdown) {
     wd <- bookdown::word_document2
   } else {
     wd <- rmarkdown::word_document
@@ -25,7 +26,70 @@ rocx <- function(reference_docx, draft = TRUE, keep_old = FALSE,
   config <- wd(reference_docx = reference_docx, ...)
 
   # Set on_exit to equal the rocx_exit function defined in this package
-  config$on_exit <- rocx_exit
+  config$on_exit <- function() {
+
+    # Verify that the output file has been created.
+    # If it hasn't, exit
+    my_envir <- parent.frame()
+    if (my_envir$output_dir == '.') {
+      my_file <- my_envir$output_file
+    } else {
+      my_file <- sprintf('%s/%s', my_envir$output_dir, my_envir$output_file)
+    }
+    if (!file.exists(my_file))
+      return(invisible(NULL))
+
+    # Rename the output file
+    new_file <- sprintf('%s_old.rocx', my_file)
+    file.rename(from = my_file, to = new_file)
+
+    if (file.exists('rocx_temp'))
+      unlink('rocx_temp', recursive = TRUE)
+    unzip(new_file, exdir = 'rocx_temp')
+
+    # Get the template material to add.  This reflects the changes from
+    # substituting the YAML variables
+    new_header <- get_template_info(my_envir$yaml_front_matter, reference_docx)
+    new_header <- xml_children(xml_child(new_header, 1))
+
+    # Here I will try to strip out the attributes from new_header that
+    # are not included in in_file.  I am hoping this will eliminate the
+    # corrupt file errors that I am encountering when I try to open
+    # the file in Word.
+    #new_header <- clean_namespace(new_header, in_file)
+
+    in_file <- read_xml('rocx_temp/word/document.xml')
+
+    my_xml <- xml_find_all(in_file, '//w:p')
+    for (i in seq_along(my_xml)) {
+      if ('&HEADER&' %in% xml_text(my_xml[i])) {
+        if (length(new_header) > 1) {
+          for (j in seq(from = length(new_header), to = 2, by = -1)) {
+            xml_add_sibling(my_xml[i], new_header[j])
+          }
+        }
+        xml_replace(my_xml[i], new_header[i])
+      }
+    }
+    write_xml(in_file, 'rocx_temp/word/document.xml')
+
+    # If draft == FALSE then remove any DRAFT indicators from the header
+    if (!draft)
+      remove_draft()
+
+    # Re-compress the files back into a docx
+    setwd('rocx_temp')
+    zip(my_file, files = list.files(), flags = '-r', zip = 'zip')
+    file.rename(from = my_file,
+                to = sprintf('../%s', my_file))
+    setwd('..')
+    unlink('rocx_temp', recursive = TRUE)
+
+    # Unless directed in YAML option to keep original pandoc output, remove it
+    if (!keep_old)
+      unlink(new_file)
+  }
+
 
   config
 }
@@ -41,7 +105,7 @@ get_template_info <- function(yaml_front_matter, reference_docx) {
 
   template <- read_xml(unz(reference_docx, 'word/document.xml'))
 
-  # Check to make sure that in_file has only one child; otherwise, the xml
+  # Check to make sure that template has only one child; otherwise, the xml
   # is structured in a way I do not understand
   if (xml_length(template) > 1)
     stop('Error in rocx::get_template_infor:  XML file has more than one child from beginning')
@@ -85,7 +149,7 @@ get_template_info <- function(yaml_front_matter, reference_docx) {
     i <- i + 1
   }
 
-  ret_val <- xml_children(xml_child(in_file, 1))
+  ret_val <- xml_children(xml_child(template, 1))
 
   # We don't want to include the 'sectPr' or other extraneous tags.  I will only
   # use those that are 'p' or 'tbl' tags
@@ -177,7 +241,7 @@ clean_namespace <- function(add_file, skeleton_file) {
 #' This function will check the header files to determine if the text in the
 #' header files indicate that this is a draft.  If found, the draft text
 #' will be removed.
-#' @import xml
+#' @import xml2
 remove_draft <- function() {
   # There may be two header files in the xml
   for (n in c(1,2)) {

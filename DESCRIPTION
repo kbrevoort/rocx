@@ -1,9 +1,13 @@
 Package: rocx
 Type: Package
-Title: What the Package Does (Title Case)
+Title: ROCX:  (Limited) docx Templates for R Markdown
 Version: 0.1.0
-Author: Who wrote it
-Maintainer: Who to complain to <yourfault@somewhere.net>
-Description: More about what it does (maybe more than one line)
+Author: Ken Brevoort <ken@brevoort.com>
+Maintainer: Ken Brevoort <ken@brevoort.com>
+Description: This package allows users to specify reference docx files that
+    serve as templates as the output file for rmarkdown or bookdown.
+Imports:
+    xml2 (>= 1.0.0)
 License: What license is it under?
 LazyData: TRUE
+RoxygenNote: 5.0.1
