@@ -207,7 +207,7 @@ rocx_exit <- function() {
   # Verify that the output file has been created.
   # If it hasn't, exit
   my_envir <- parent.frame()
-  if (my_envir$output_dir = '.') {
+  if (my_envir$output_dir == '.') {
     my_file <- my_envir$output_file
   } else {
     my_file <- sprintf('%s/%s', my_envir$output_dir, my_envir$output_file)
