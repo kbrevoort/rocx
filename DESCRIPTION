@@ -1,8 +1,7 @@
 Package: rocx
-Version: 0.98.1
 Type: Package
 Title: ROCX:  (Limited) docx Templates for R Markdown
-Version: 0.1.0
+Version: 0.1.1
 Author: Ken Brevoort <ken@brevoort.com>
 Maintainer: Ken Brevoort <ken@brevoort.com>
 Description: This package allows users to specify reference docx files that

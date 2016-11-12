@@ -245,18 +245,19 @@ clean_namespace <- function(add_file, skeleton_file) {
 remove_draft <- function() {
   # There may be two header files in the xml
   for (n in c(1,2)) {
-  header_file <- sprintf('rocx_temp/word/header%i.xml', n)
-  if (file.exists(header_file)) {
-    resave <- FALSE
-    in_file <- read_xml(header_file)
-    for (i in seq_along(in_file)) {
-      if (xml_text(xml_child(in_file, i)) == 'DRAFT') {
-        replace_text(xml_child(in_file, i), '')
-        resave <- TRUE
+    header_file <- sprintf('rocx_temp/word/header%i.xml', n)
+    if (file.exists(header_file)) {
+      resave <- FALSE
+      in_file <- read_xml(header_file)
+      nodes <- xml_find_all(in_file, '//w:p')
+      for (i in seq_along(nodes)) {
+        if (xml_text(xml_child(nodes, i)) == 'DRAFT') {
+          replace_text(xml_child(nodes, i), '')
+          resave <- TRUE
+        }
       }
-    }
-    if (resave)
-      write_xml(in_file, header_file)
+      if (resave)
+        write_xml(in_file, header_file)
     }
   }
   invisible(NULL)
