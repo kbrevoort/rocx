@@ -39,13 +39,7 @@ rocx <- function(reference_docx, draft = TRUE, keep_old = FALSE,
     if (!file.exists(my_file))
       return(invisible(NULL))
 
-    # Rename the output file
-    new_file <- sprintf('%s_old.rocx', my_file)
-    file.rename(from = my_file, to = new_file)
-
-    if (file.exists('rocx_temp'))
-      unlink('rocx_temp', recursive = TRUE)
-    unzip(new_file, exdir = 'rocx_temp')
+    extract_from_docx(my_file, keep_old)
 
     # Get the template material to add.  This reflects the changes from
     # substituting the YAML variables
@@ -58,7 +52,9 @@ rocx <- function(reference_docx, draft = TRUE, keep_old = FALSE,
     # the file in Word.
     #new_header <- clean_namespace(new_header, in_file)
 
-    in_file <- read_xml('rocx_temp/word/document.xml')
+    xml_doc_path <- paste0(temp_dir_name(my_file), '/word/document.xml')
+
+    in_file <- read_xml(xml_doc_path)
 
     my_xml <- xml_find_all(in_file, '//w:p')
     for (i in seq_along(my_xml)) {
@@ -71,27 +67,65 @@ rocx <- function(reference_docx, draft = TRUE, keep_old = FALSE,
         xml_replace(my_xml[i], new_header[i])
       }
     }
-    write_xml(in_file, 'rocx_temp/word/document.xml')
+    write_xml(in_file, xml_doc_path)
 
     # If draft == FALSE then remove any DRAFT indicators from the header
     if (!draft)
-      remove_draft()
+      remove_draft(my_file)
 
     # Re-compress the files back into a docx
-    setwd('rocx_temp')
-    zip(my_file, files = list.files(), flags = '-r', zip = 'zip')
-    file.rename(from = my_file,
-                to = sprintf('../%s', my_file))
-    setwd('..')
-    unlink('rocx_temp', recursive = TRUE)
+    compress_to_docx(my_file)
 
-    # Unless directed in YAML option to keep original pandoc output, remove it
-    if (!keep_old)
-      unlink(new_file)
+    # # Unless directed in YAML option to keep original pandoc output, remove it
+    # if (!keep_old)
+    #   unlink(new_file)
   }
 
 
   config
+}
+
+temp_dir_name <- function(file_name) {
+  if (missing(file_name))
+    stop('Must supply file_name to temp_dir_name')
+
+  sprintf('rocx_temp_%s_%s',
+          tools::file_path_sans_ext(file_name),
+          tools::file_ext(file_name))
+}
+
+#' Extract docx contents
+extract_from_docx <- function(file_name, keep_old = TRUE) {
+  # Rename the output file
+  new_file <- sprintf('%s_%s_old.rocx',
+                      tools::file_path_sans_ext(file_name),
+                      tools::file_ext(file_name))
+  file.rename(from = file_name, to = new_file)
+
+  dir_name <- temp_dir_name(file_name)
+
+  if (file.exists(dir_name))
+    unlink(dir_name, recursive = TRUE)
+
+  unzip(new_file, exdir = dir_name)
+
+  if (!keep_old)
+    unlink(new_file)
+
+  invisible(NULL)
+}
+
+#' Compress file structure to a docx file
+compress_to_docx <- function(file_name) {
+  dir_name <- temp_dir_name(file_name)
+
+  setwd(dir_name)
+  zip(file_name, files = list.files(), flags = '-r', zip = 'zip')
+  file.rename(from = file_name, to = sprintf('../%s', file_name))
+  setwd('..')
+  unlink(dir_name, recursive = TRUE)
+
+  invisible(NULL)
 }
 
 #' Get Template Information
@@ -242,20 +276,36 @@ clean_namespace <- function(add_file, skeleton_file) {
 #' header files indicate that this is a draft.  If found, the draft text
 #' will be removed.
 #' @import xml2
-remove_draft <- function() {
+remove_draft <- function(file_name) {
   # There may be two header files in the xml
-  for (n in c(1,2)) {
-    header_file <- sprintf('rocx_temp/word/header%i.xml', n)
+  for (n in c(1:3)) {
+    header_file <- sprintf('%s/word/header%i.xml',
+                           temp_dir_name(file_name),
+                           n)
     if (file.exists(header_file)) {
       resave <- FALSE
       in_file <- read_xml(header_file)
+
+      # Remove all text mentions of draft
       nodes <- xml_find_all(in_file, '//w:p')
       for (i in seq_along(nodes)) {
-        if (xml_text(xml_child(nodes, i)) == 'DRAFT') {
-          replace_text(xml_child(nodes, i), '')
+        if (xml_text(nodes[i]) == 'DRAFT') {
+          replace_text(nodes[i], '')
           resave <- TRUE
         }
       }
+
+      # Check for the existence of a watermark
+      nodes <- xml_find_all(in_file, '//v:textpath')
+      for (i in seq_along(nodes)) {
+        if (xml_has_attr(nodes[i], 'string')) {
+          if (xml_attr(nodes[i], 'string') == 'DRAFT') {
+            xml_attr(nodes[i], 'string') <- ''
+            resave <- TRUE
+          }
+        }
+      }
+
       if (resave)
         write_xml(in_file, header_file)
     }
@@ -267,66 +317,66 @@ remove_draft <- function() {
 #'
 #' This function will serve as the new on_exit function passed to rmarkdown or
 #' bookdown.
-rocx_exit <- function() {
-
-  # Verify that the output file has been created.
-  # If it hasn't, exit
-  my_envir <- parent.frame()
-  if (my_envir$output_dir == '.') {
-    my_file <- my_envir$output_file
-  } else {
-    my_file <- sprintf('%s/%s', my_envir$output_dir, my_envir$output_file)
-  }
-  if (!file.exists(my_file))
-    return(invisible(NULL))
-
-  # Rename the output file
-  new_file <- sprintf('%s_old.rocx', my_file)
-  file.rename(from = my_file, to = new_file)
-
-  if (file.exists('rocx_temp'))
-    unlink('rocx_temp', recursive = TRUE)
-  unzip(new_file, exdir = 'rocx_temp')
-
-  # Get the template material to add.  This reflects the changes from
-  # substituting the YAML variables
-  new_header <- get_template_info(my_envir$yaml_front_matter, reference_docx)
-  new_header <- xml_children(xml_child(new_header, 1))
-
-  # Here I will try to strip out the attributes from new_header that
-  # are not included in in_file.  I am hoping this will eliminate the
-  # corrupt file errors that I am encountering when I try to open
-  # the file in Word.
-  #new_header <- clean_namespace(new_header, in_file)
-
-  in_file <- read_xml('rocx_temp/word/document.xml')
-
-  my_xml <- xml_find_all(in_file, '//w:p')
-  for (i in seq_along(my_xml)) {
-    if ('&HEADER&' %in% xml_text(my_xml[i])) {
-      if (length(new_header) > 1) {
-        for (j in seq(from = length(new_header), to = 2, by = -1)) {
-          xml_add_sibling(my_xml[i], new_header[j])
-        }
-      }
-      xml_replace(my_xml[i], new_header[i])
-    }
-  }
-  write_xml(in_file, 'rocx_temp/word/document.xml')
-
-  # If draft == FALSE then remove any DRAFT indicators from the header
-  if (!draft)
-    remove_draft()
-
-  # Re-compress the files back into a docx
-  setwd('rocx_temp')
-  zip(my_file, files = list.files(), flags = '-r', zip = 'zip')
-  file.rename(from = my_file,
-              to = sprintf('../%s', my_file))
-  setwd('..')
-  unlink('rocx_temp', recursive = TRUE)
-
-  # Unless directed in YAML option to keep original pandoc output, remove it
-  if (!keep_old)
-    unlink(new_file)
-}
+# rocx_exit <- function() {
+#
+#   # Verify that the output file has been created.
+#   # If it hasn't, exit
+#   my_envir <- parent.frame()
+#   if (my_envir$output_dir == '.') {
+#     my_file <- my_envir$output_file
+#   } else {
+#     my_file <- sprintf('%s/%s', my_envir$output_dir, my_envir$output_file)
+#   }
+#   if (!file.exists(my_file))
+#     return(invisible(NULL))
+#
+#   # Rename the output file
+#   new_file <- sprintf('%s_old.rocx', my_file)
+#   file.rename(from = my_file, to = new_file)
+#
+#   #if (file.exists('rocx_temp'))
+#   #  unlink('rocx_temp', recursive = TRUE)
+#   #unzip(new_file, exdir = 'rocx_temp')
+#
+#   # Get the template material to add.  This reflects the changes from
+#   # substituting the YAML variables
+#   new_header <- get_template_info(my_envir$yaml_front_matter, reference_docx)
+#   new_header <- xml_children(xml_child(new_header, 1))
+#
+#   # Here I will try to strip out the attributes from new_header that
+#   # are not included in in_file.  I am hoping this will eliminate the
+#   # corrupt file errors that I am encountering when I try to open
+#   # the file in Word.
+#   #new_header <- clean_namespace(new_header, in_file)
+#
+#   in_file <- read_xml('rocx_temp/word/document.xml')
+#
+#   my_xml <- xml_find_all(in_file, '//w:p')
+#   for (i in seq_along(my_xml)) {
+#     if ('&HEADER&' %in% xml_text(my_xml[i])) {
+#       if (length(new_header) > 1) {
+#         for (j in seq(from = length(new_header), to = 2, by = -1)) {
+#           xml_add_sibling(my_xml[i], new_header[j])
+#         }
+#       }
+#       xml_replace(my_xml[i], new_header[i])
+#     }
+#   }
+#   write_xml(in_file, 'rocx_temp/word/document.xml')
+#
+#   # If draft == FALSE then remove any DRAFT indicators from the header
+#   if (!draft)
+#     remove_draft()
+#
+#   # Re-compress the files back into a docx
+#   setwd('rocx_temp')
+#   zip(my_file, files = list.files(), flags = '-r', zip = 'zip')
+#   file.rename(from = my_file,
+#               to = sprintf('../%s', my_file))
+#   setwd('..')
+#   unlink('rocx_temp', recursive = TRUE)
+#
+#   # Unless directed in YAML option to keep original pandoc output, remove it
+#   if (!keep_old)
+#     unlink(new_file)
+# }
